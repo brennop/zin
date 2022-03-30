@@ -6,41 +6,52 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+#include <pthread.h>
+
 #define PORT 8080
 #define MAXLINE 1024
-#define MAX_CLIENTS 10
+#define MAX_CLIENTS 100
 
 void *handle_connection(void *);
 char *ROOT;
+
+void check(int value, char *message) {
+  if (value == -1) {
+    printf("%s\n", message);
+    exit(-1);
+  }
+}
 
 int main() {
   int listen_fd, connection_fd;
   struct sockaddr_in addr;
 
-  /** caminho para servir os arquivos */
+  /** diretório atual */
   ROOT = getenv("PWD");
 
   /** cria um socket */
   listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+  check(listen_fd, "Erro ao criar o socket");
 
   /** inicializa informações de endereçamento */
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_ANY); /** endereço para escutar (any)*/
+  addr.sin_addr.s_addr = htonl(INADDR_ANY); /** endereço para escutar (any) */
   addr.sin_port = htons(PORT);              /** porta para escutar (8000) */
 
-  bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr));
-  listen(listen_fd, MAX_CLIENTS);
+  /** associa a porta e começa a ouvir nela */
+  check(bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)),
+        "Erro ao associar a porta.");
+  check(listen(listen_fd, MAX_CLIENTS), "Erro ao tentar ouvir na porta");
   printf("Esperando conexoes na porta %d\n", PORT);
 
   for (;;) {
-    struct sockaddr_in client_addr;
-    socklen_t client_addr_len;
-
     connection_fd = accept(listen_fd, NULL, NULL);
-    handle_connection(&connection_fd);
+    int *p_conn = malloc(sizeof(*p_conn));
+    *p_conn = connection_fd;
 
-    close(connection_fd);
+    pthread_t t;
+    pthread_create(&t, NULL, handle_connection, p_conn);
   }
 
   return 0;
@@ -49,6 +60,8 @@ int main() {
 void *handle_connection(void *arg) {
   /** descritor da conexão */
   int connection_fd = *(int *)arg;
+
+  free(arg);
 
   /** buffer para receber dados */
   char buffer[MAXLINE];
@@ -70,7 +83,6 @@ void *handle_connection(void *arg) {
     /** faz um "parsing" do que foi recebido */
     char *method = strtok(buffer, " \t\r\n"); // metodo http
     char *uri = strtok(NULL, " \t");          // caminho do arquivo
-    char *prot = strtok(NULL, " \t\r\n");     // versão do protocolo
 
     if (strncmp(method, "GET", 4) == 0) {
       /** se nenhum arquivo foi especificado, usa o index.html */
@@ -98,9 +110,6 @@ void *handle_connection(void *arg) {
 
         /** limpa o buffer antes de enviar o arquivo */
         memset(buffer, 0, MAXLINE);
-        /* while (fgets(buffer, MAXLINE, file) != NULL) { */
-        /*   write(connection_fd, buffer, strlen(buffer)); */
-        /* } */
         int bytes_read;
         while ((bytes_read = fread(buffer, 1, MAXLINE, file)) > 0) {
           write(connection_fd, buffer, bytes_read);
@@ -112,6 +121,8 @@ void *handle_connection(void *arg) {
       write(connection_fd, "HTTP/1.1 501 Not Implemented\r\n\r\n", 31);
     }
   }
+
+  close(connection_fd);
 
   return NULL;
 }
