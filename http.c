@@ -54,6 +54,7 @@ void *handle_connection(void *arg) {
   char buffer[MAXLINE];
   memset(buffer, 0, MAXLINE);
 
+  /** string para o caminho do arquivo */
   char path[MAXLINE];
 
   /** le os dados recebidos */
@@ -77,8 +78,9 @@ void *handle_connection(void *arg) {
         uri = "/index.html";
       }
 
-      strcpy(path, ROOT);
-      strcpy(&path[strlen(ROOT)], uri);
+      strcpy(path, ROOT);      /** pwd */
+      strcat(path, "/public"); /** servir da pasta public */
+      strcat(path, uri);       /** apenda o path recebido */
       printf("file: %s\n", path);
 
       /** tenta abrir o arquivo */
