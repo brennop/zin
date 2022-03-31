@@ -7,12 +7,25 @@
 #include <sys/socket.h>
 
 #include <pthread.h>
+#include <semaphore.h>
+
+#include "queue.h"
 
 #define PORT 8080
 #define MAXLINE 1024
 #define MAX_CLIENTS 100
 
-void *handle_connection(void *);
+#define POOL_SIZE 20
+#define QUEUE_SIZE 1000
+
+pthread_t thread_pool[POOL_SIZE];
+Queue *connection_queue;
+
+sem_t queue_empty;
+sem_t queue_full;
+pthread_mutex_t queue_lock;
+
+void handle_connection(int connection_fd);
 char *ROOT;
 
 void check(int value, char *message) {
@@ -21,6 +34,8 @@ void check(int value, char *message) {
     exit(-1);
   }
 }
+
+void *thread_handler();
 
 int main() {
   int listen_fd, connection_fd;
@@ -45,24 +60,40 @@ int main() {
   check(listen(listen_fd, MAX_CLIENTS), "Erro ao tentar ouvir na porta");
   printf("Esperando conexoes na porta %d\n", PORT);
 
+  /** cria as threads na thread pool */
+  for (int i = 0; i < POOL_SIZE; i++) {
+    pthread_create(&thread_pool[i], NULL, thread_handler, NULL);
+  }
+
+  /** inicializa os semaforos e o lock */
+  sem_init(&queue_empty, 0, QUEUE_SIZE);
+  sem_init(&queue_full, 0, 0);
+  pthread_mutex_init(&queue_lock, 0);
+
+  connection_queue = newQueue(QUEUE_SIZE);
+
   for (;;) {
     connection_fd = accept(listen_fd, NULL, NULL);
-    int *p_conn = malloc(sizeof(*p_conn));
-    *p_conn = connection_fd;
 
-    pthread_t t;
-    pthread_create(&t, NULL, handle_connection, p_conn);
+    // espera se a fila estiver vazia
+    if (sem_trywait(&queue_empty) == 0) {
+      int *p_conn = malloc(sizeof(*p_conn));
+      *p_conn = connection_fd;
+      pthread_mutex_lock(&queue_lock);
+      { push(connection_queue, p_conn); }
+      pthread_mutex_unlock(&queue_lock);
+      sem_post(&queue_full);
+    } else {
+      // recusa conexões se a fila estiver cheia
+      write(connection_fd, "HTTP/1.1 503 Service Unavailable\r\n\r\n", 35);
+      close(connection_fd);
+    }
   }
 
   return 0;
 }
 
-void *handle_connection(void *arg) {
-  /** descritor da conexão */
-  int connection_fd = *(int *)arg;
-
-  free(arg);
-
+void handle_connection(int connection_fd) {
   /** buffer para receber dados */
   char buffer[MAXLINE];
   memset(buffer, 0, MAXLINE);
@@ -78,7 +109,7 @@ void *handle_connection(void *arg) {
   } else if (received == 0) {
     fprintf(stderr, "Conexao fechada.\n");
   } else {
-    printf("%s\n", buffer); /** imprime o que foi recebido */
+    /* printf("%s\n", buffer); // imprime o que foi recebido */
 
     /** faz um "parsing" do que foi recebido */
     char *method = strtok(buffer, " \t\r\n"); // metodo http
@@ -93,13 +124,11 @@ void *handle_connection(void *arg) {
       strcpy(path, ROOT);      /** pwd */
       strcat(path, "/public"); /** servir da pasta public */
       strcat(path, uri);       /** apenda o path recebido */
-      printf("file: %s\n", path);
 
       /** tenta abrir o arquivo */
       FILE *file = fopen(path, "rb");
 
       if (file == NULL) {
-        printf("404: Arquivo nao encontrado.\n");
         /** se o arquivo não existir, retorna um erro 404 */
         char *error_msg = "HTTP/1.1 404 Not Found\r\n\r\n";
         write(connection_fd, error_msg, strlen(error_msg));
@@ -123,6 +152,24 @@ void *handle_connection(void *arg) {
   }
 
   close(connection_fd);
+}
 
-  return NULL;
+void *thread_handler() {
+  /** a thread deve rodar pra sempre */
+  while (1) {
+    int connection_fd;
+    sem_wait(&queue_full);
+    {
+      pthread_mutex_lock(&queue_lock);
+      {
+        int *p_conn = dequeue(connection_queue);
+        connection_fd = *p_conn;
+        free(p_conn);
+      }
+      pthread_mutex_unlock(&queue_lock);
+    }
+    sem_post(&queue_empty);
+
+    handle_connection(connection_fd);
+  }
 }
