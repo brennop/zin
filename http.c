@@ -6,9 +6,6 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
-#include <pthread.h>
-#include <semaphore.h>
-
 #include "queue.h"
 
 #define PORT 8080
@@ -16,14 +13,10 @@
 #define MAX_CLIENTS 100
 
 #define POOL_SIZE 20
-#define QUEUE_SIZE 1000
+#define QUEUE_SIZE 50
 
 pthread_t thread_pool[POOL_SIZE];
-Queue *connection_queue;
-
-sem_t queue_empty;
-sem_t queue_full;
-pthread_mutex_t queue_lock;
+queue_t connection_queue;
 
 void handle_connection(int connection_fd);
 char *ROOT;
@@ -60,32 +53,23 @@ int main() {
   check(listen(listen_fd, MAX_CLIENTS), "Erro ao tentar ouvir na porta");
   printf("Esperando conexoes na porta %d\n", PORT);
 
+  queue_init(&connection_queue, QUEUE_SIZE);
+
   /** cria as threads na thread pool */
   for (int i = 0; i < POOL_SIZE; i++) {
     pthread_create(&thread_pool[i], NULL, thread_handler, NULL);
   }
 
-  /** inicializa os semaforos e o lock */
-  sem_init(&queue_empty, 0, QUEUE_SIZE);
-  sem_init(&queue_full, 0, 0);
-  pthread_mutex_init(&queue_lock, 0);
-
-  connection_queue = newQueue(QUEUE_SIZE);
-
   for (;;) {
     connection_fd = accept(listen_fd, NULL, NULL);
 
-    // espera se a fila estiver vazia
-    if (sem_trywait(&queue_empty) == 0) {
-      int *p_conn = malloc(sizeof(*p_conn));
-      *p_conn = connection_fd;
-      pthread_mutex_lock(&queue_lock);
-      { push(connection_queue, p_conn); }
-      pthread_mutex_unlock(&queue_lock);
-      sem_post(&queue_full);
-    } else {
+    int *connection_fd_p = malloc(sizeof(*connection_fd_p));
+    *connection_fd_p = connection_fd;
+
+    int push_result = queue_push(&connection_queue, connection_fd_p);
+    if (push_result != 0) {
       // recusa conexões se a fila estiver cheia
-      write(connection_fd, "HTTP/1.1 503 Service Unavailable\r\n\r\n", 35);
+      write(connection_fd, "HTTP/1.1 503 Service Unavailable\r\n\r\n", 36);
       close(connection_fd);
     }
   }
@@ -157,18 +141,10 @@ void handle_connection(int connection_fd) {
 void *thread_handler() {
   /** a thread deve rodar pra sempre */
   while (1) {
-    int connection_fd;
-    sem_wait(&queue_full);
-    {
-      pthread_mutex_lock(&queue_lock);
-      {
-        int *p_conn = dequeue(connection_queue);
-        connection_fd = *p_conn;
-        free(p_conn);
-      }
-      pthread_mutex_unlock(&queue_lock);
-    }
-    sem_post(&queue_empty);
+    int *connection_fd_p;
+    queue_pop(&connection_queue, (void*) &connection_fd_p);
+    int connection_fd = *connection_fd_p;
+    free(connection_fd_p);
 
     handle_connection(connection_fd);
   }
