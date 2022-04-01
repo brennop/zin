@@ -87,21 +87,21 @@ int main() {
 }
 
 int setup_server(int port) {
-  /** descritor do socket */
+  // descritor do socket
   int server_fd;
   struct sockaddr_in addr;
 
-  /** cria um socket */
+  // cria um socket
   server_fd = socket(AF_INET, SOCK_STREAM, 0);
   check(server_fd, "Erro ao criar o socket");
 
-  /** inicializa informações de endereçamento */
+  // inicializa informações de endereçamento
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = INADDR_ANY; /** endereço para escutar (any) */
-  addr.sin_port = htons(port);       /** porta para escutar (8000) */
+  addr.sin_addr.s_addr = htonl(INADDR_ANY); /** endereço para escutar (any) */
+  addr.sin_port = htons(port);              /** porta para escutar (8000) */
 
-  /** associa a porta e começa a ouvir nela */
+  // associa a porta e começa a ouvir nela
   int bind_result = bind(server_fd, (struct sockaddr *)&addr, sizeof(addr));
   check(bind_result, "Erro ao associar a porta.");
 
@@ -155,7 +155,7 @@ void handle_connection(int connection_fd) {
         char *ok_msg = "HTTP/1.1 200 OK\r\n\r\n";
         write(connection_fd, ok_msg, strlen(ok_msg));
 
-        /** limpa o buffer antes de enviar o arquivo */
+        // limpa o buffer antes de enviar o arquivo
         memset(buffer, 0, MAXLINE);
         int bytes_read;
         while ((bytes_read = fread(buffer, 1, MAXLINE, file)) > 0) {
@@ -164,8 +164,8 @@ void handle_connection(int connection_fd) {
 
         fclose(file);
       }
-    // respondemos "Not Implemented" pra qualquer outro método 
     } else {
+      // respondemos "Not Implemented" pra qualquer outro método
       write(connection_fd, "HTTP/1.1 501 Not Implemented\r\n\r\n", 31);
     }
   }
