@@ -4,7 +4,6 @@
 #include <unistd.h>
 
 #include <arpa/inet.h>
-#include <sys/select.h>
 #include <sys/socket.h>
 
 #include "queue.h"
@@ -49,37 +48,13 @@ int main() {
 
   int server_socket = setup_server(PORT);
 
-  fd_set current_sockets, ready_sockets;
-
-  FD_ZERO(&current_sockets);
-  FD_SET(server_socket, &current_sockets);
-
   while (1) {
-    /** copia os sockets */
-    ready_sockets = current_sockets;
+    int connection_fd = accept(server_socket, NULL, NULL);
 
-    if (select(FD_SETSIZE, &ready_sockets, NULL, NULL, NULL) < 0) {
-      fprintf(stderr, "Erro ao ler os socket.");
-      exit(EXIT_FAILURE);
-    }
-
-    for (int i = 0; i < FD_SETSIZE; i++) {
-      if (FD_ISSET(i, &ready_sockets)) {
-        if (i == server_socket) {
-          int connection_fd = accept(server_socket, NULL, NULL);
-          FD_SET(connection_fd, &current_sockets);
-        } else {
-          int *connection_fd_p = malloc(sizeof(*connection_fd_p));
-          *connection_fd_p = i;
-
-          if (queue_trypush(&connection_queue, connection_fd_p) != 0) {
-            // recusa conexões se a fila estiver cheia
-            write(i, "HTTP/1.1 503 Service Unavailable\r\n\r\n", 36);
-            close(i);
-          }
-          FD_CLR(i, &current_sockets);
-        }
-      }
+    if (queue_trypush(&connection_queue, connection_fd) != 0) {
+      // recusa conexões se a fila estiver cheia
+      write(connection_fd, "HTTP/1.1 503 Service Unavailable\r\n\r\n", 36);
+      close(connection_fd);
     }
   }
 
@@ -176,10 +151,8 @@ void handle_connection(int connection_fd) {
 void *thread_handler() {
   // a thread deve rodar pra sempre
   while (1) {
-    int *connection_fd_p;
-    queue_pop(&connection_queue, (void *)&connection_fd_p);
-    int connection_fd = *connection_fd_p;
-    free(connection_fd_p);
+    int connection_fd;
+    queue_pop(&connection_queue, &connection_fd);
 
     handle_connection(connection_fd);
   }
