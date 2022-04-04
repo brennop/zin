@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>SSE Chat</title>
+</head>
+<body>
+  <script>
+    const evtSource = new EventSource("ssedemo.php");
+
+    evtSource.onmessage = function(event) {
+      console.log(event.data);
+    }
+  </script>
+</body>
+</html>

@@ -11,7 +11,7 @@
 /** porta para ouvir */
 #define PORT 8080
 /** tamanho do buffer para ler/responder conexões */
-#define MAXLINE 1024
+#define MAXLINE 2048
 /** tamanho do backlog do socket */
 #define MAX_CLIENTS 100
 /** tamanho da thread pool */
@@ -21,7 +21,6 @@
 
 pthread_t thread_pool[POOL_SIZE];
 queue_t connection_queue;
-char *ROOT;
 
 int setup_server(int port);
 void handle_connection(int connection_fd);
@@ -35,9 +34,6 @@ void check(int value, char *message) {
 }
 
 int main() {
-  // diretório atual
-  ROOT = getenv("PWD");
-
   // inicializa a fila de conexões/clientes
   queue_init(&connection_queue, QUEUE_SIZE);
 
@@ -76,6 +72,9 @@ int setup_server(int port) {
   addr.sin_addr.s_addr = htonl(INADDR_ANY); /** endereço para escutar (any) */
   addr.sin_port = htons(port);              /** porta para escutar (8000) */
 
+  int enabled = 1; // permite pegar a porta após fechar
+  setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+
   // associa a porta e começa a ouvir nela
   int bind_result = bind(server_fd, (struct sockaddr *)&addr, sizeof(addr));
   check(bind_result, "Erro ao associar a porta.");
@@ -92,9 +91,6 @@ void handle_connection(int connection_fd) {
   char buffer[MAXLINE];
   memset(buffer, 0, MAXLINE);
 
-  /** string para o caminho do arquivo */
-  char path[MAXLINE];
-
   /** le os dados recebidos */
   int received = read(connection_fd, buffer, MAXLINE);
 
@@ -105,39 +101,45 @@ void handle_connection(int connection_fd) {
   } else {
     // faz um "parsing" do que foi recebido
     char *method = strtok(buffer, " \t\r\n"); // metodo http
-    char *uri = strtok(NULL, " \t");          // caminho do arquivo
+    char *path = strtok(NULL, " \t");         // caminho do arquivo
 
     // só sabemos lidar com o método GET
     if (strncmp(method, "GET", 4) == 0) {
-      // se nenhum arquivo foi especificado, usa o index.html
-      if (strncmp(uri, "/", 2) == 0) {
-        uri = "/index.html";
-      }
+      // se nenhuma sala foi especificada, enviamos o index.html
+      if (strncmp(path, "/", 2) == 0) {
+        // tenta abrir o arquivo no caminho especificado
+        FILE *file = fopen("index.html", "rb");
 
-      strcpy(path, ROOT);      /** pwd */
-      strcat(path, "/public"); /** servir da pasta public */
-      strcat(path, uri);       /** apenda o path recebido */
+        if (file == NULL) {
+          // se o arquivo não existir, retorna um erro 404
+          char *error_msg = "HTTP/1.1 404 Not Found\r\n\r\n";
+          write(connection_fd, error_msg, strlen(error_msg));
+        } else {
+          // se o arquivo existir, retorna o conteúdo do arquivo
+          char *msg = "HTTP/1.1 200 OK\r\n"
+                      "Content-Type: text/html\r\n\r\n";
+          write(connection_fd, msg, strlen(msg));
 
-      // tenta abrir o arquivo no caminho especificado
-      FILE *file = fopen(path, "rb");
+          // limpa o buffer antes de enviar o arquivo
+          memset(buffer, 0, MAXLINE);
+          int bytes_read;
+          while ((bytes_read = fread(buffer, 1, MAXLINE, file)) > 0) {
+            write(connection_fd, buffer, bytes_read);
+          }
 
-      if (file == NULL) {
-        // se o arquivo não existir, retorna um erro 404
-        char *error_msg = "HTTP/1.1 404 Not Found\r\n\r\n";
-        write(connection_fd, error_msg, strlen(error_msg));
-      } else {
-        // se o arquivo existir, retorna o conteúdo do arquivo
-        char *ok_msg = "HTTP/1.1 200 OK\r\n\r\n";
-        write(connection_fd, ok_msg, strlen(ok_msg));
-
-        // limpa o buffer antes de enviar o arquivo
-        memset(buffer, 0, MAXLINE);
-        int bytes_read;
-        while ((bytes_read = fread(buffer, 1, MAXLINE, file)) > 0) {
-          write(connection_fd, buffer, bytes_read);
+          fclose(file);
         }
+      } else {
+        // iniciamos um sse
+        char *msg = "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: text/event-stream\r\n\r\n";
+        write(connection_fd, msg, strlen(msg));
 
-        fclose(file);
+        while (1) {
+          write(connection_fd, "data: ola mundo\r\n\r\n", 19);
+
+          sleep(1);
+        }
       }
     } else {
       // respondemos "Not Implemented" pra qualquer outro método
