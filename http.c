@@ -170,9 +170,10 @@ void handle_connection(int connection_fd) {
       }
 
       payload = strtok(NULL, "\r\n");
-      char *message = malloc((strlen(payload) + 7) * sizeof(*message));
+      char *message = malloc((strlen(payload) + 1 + 6 + 4) * sizeof(*message));
       strcpy(message, "data: ");
       strcat(message, payload);
+      strcat(message, "\r\n\r\n");
 
       queue_push(&message_stream.publisher_queue, message);
 
