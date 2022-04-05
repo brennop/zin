@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,8 +20,13 @@
 /** tamanho da fila de conexões */
 #define QUEUE_SIZE 50
 
+#define MAX_USERS 50
+
 pthread_t thread_pool[POOL_SIZE];
 queue_t connection_queue;
+
+stream_t message_stream;
+queue_t publisher_queue;
 
 int setup_server(int port);
 void handle_connection(int connection_fd);
@@ -36,6 +42,9 @@ void check(int value, char *message) {
 int main() {
   // inicializa a fila de conexões/clientes
   queue_init(&connection_queue, QUEUE_SIZE);
+
+  // incializa a stream de mensagens
+  stream_init(&message_stream);
 
   // cria as threads da thread pool
   for (int i = 0; i < POOL_SIZE; i++) {
@@ -103,7 +112,6 @@ void handle_connection(int connection_fd) {
     char *method = strtok(buffer, " \t\r\n"); // metodo http
     char *path = strtok(NULL, " \t");         // caminho do arquivo
 
-    // só sabemos lidar com o método GET
     if (strncmp(method, "GET", 4) == 0) {
       // se nenhuma sala foi especificada, enviamos o index.html
       if (strncmp(path, "/", 2) == 0) {
@@ -130,17 +138,46 @@ void handle_connection(int connection_fd) {
           fclose(file);
         }
       } else {
+        queue_t message_queue;
+        queue_init(&message_queue, 24);
+        stream_subscribe(&message_stream, &message_queue);
+
         // iniciamos um sse
         char *msg = "HTTP/1.1 200 OK\r\n"
                     "Content-Type: text/event-stream\r\n\r\n";
         write(connection_fd, msg, strlen(msg));
 
+        // TODO: fechar esse while se a conexão fechar
         while (1) {
-          write(connection_fd, "data: ola mundo\r\n\r\n", 19);
-
-          sleep(1);
+          char *message;
+          queue_pop(&message_queue, &message);
+          write(connection_fd, message, strlen(message));
         }
       }
+    } else if (strncmp(method, "POST", 5) == 0) {
+      char *payload;
+      // consome os headers
+      while (1) {
+        // consome a chave
+        payload = strtok(NULL, "\r\n: \t");
+        if (!payload)
+          break;
+
+        payload = strtok(NULL, "\r\n");
+        payload = payload + 1 + strlen(payload);
+        if (payload[1] == '\r' && payload[2] == '\n')
+          break;
+      }
+
+      payload = strtok(NULL, "\r\n");
+      char *message = malloc((strlen(payload) + 7) * sizeof(*message));
+      strcpy(message, "data: ");
+      strcat(message, payload);
+
+      queue_push(&message_stream.publisher_queue, message);
+
+      char *msg = "HTTP/1.1 201 Created\r\n\r\n";
+      write(connection_fd, msg, strlen(msg));
     } else {
       // respondemos "Not Implemented" pra qualquer outro método
       write(connection_fd, "HTTP/1.1 501 Not Implemented\r\n\r\n", 31);
@@ -157,5 +194,20 @@ void *thread_handler() {
     queue_pop(&connection_queue, &connection_fd);
 
     handle_connection(connection_fd);
+  }
+}
+
+void *stream_replicate(void *arg) {
+  stream_t *stream = (stream_t *)arg;
+  while (1) {
+    char *message;
+    queue_pop(&stream->publisher_queue, &message);
+    pthread_mutex_lock(&stream->mutex);
+    {
+      for (int i = 0; i < stream->subscribers; i++) {
+        queue_push(stream->subscriber_queues[i], message);
+      }
+    }
+    pthread_mutex_unlock(&stream->mutex);
   }
 }

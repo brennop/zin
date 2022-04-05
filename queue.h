@@ -1,9 +1,11 @@
 #include <pthread.h>
 #include <stdlib.h>
 
-typedef struct queue_t {
+#define MAX_SUBSCRIPTIONS 1024
+
+typedef struct {
   /** array de elementos */
-  int *data;
+  void **data;
   /** indíce para inserir */
   int in;
   /** indíce para remover */
@@ -16,28 +18,42 @@ typedef struct queue_t {
   /** mutex para acessar os dados da fila */
   pthread_mutex_t mutex;
   /** condicional para esperar a fila ter elementos */
-  pthread_cond_t waiting;
+  pthread_cond_t not_empty;
+  /** condicional para esperar a fila ter elementos */
+  pthread_cond_t not_full;
 } queue_t;
+
+void *stream_replicate(void *stream);
+
+typedef struct {
+  int subscribers;
+  queue_t publisher_queue;
+  queue_t *subscriber_queues[MAX_SUBSCRIPTIONS];
+
+  pthread_t thread;
+  pthread_mutex_t mutex;
+} stream_t;
 
 /**
  * Inicializa uma fila queue com capacidade capcity
  */
 void queue_init(queue_t *queue, int capacity) {
   queue->bounds = capacity;
-  queue->data = (int *)calloc(capacity, sizeof(*queue->data));
+  queue->data = (void **)calloc(capacity, sizeof(*queue->data));
   queue->length = 0;
   queue->in = 0;
   queue->out = 0;
 
   pthread_mutex_init(&queue->mutex, 0);
-  pthread_cond_init(&queue->waiting, 0);
+  pthread_cond_init(&queue->not_empty, 0);
+  pthread_cond_init(&queue->not_full, 0);
 }
 
 /**
- * Tenta inserir um elemento na fila.
- * Retorna -1 se não for possível e.g. a fila está cheia.
+ * tenta inserir um elemento na fila.
+ * retorna -1 se não for possível e.g. a fila está cheia.
  */
-int queue_trypush(queue_t *queue, int element) {
+int queue_trypush(queue_t *queue, void *element) {
   pthread_mutex_lock(&queue->mutex);
   {
     // se a fila estiver cheia
@@ -54,7 +70,35 @@ int queue_trypush(queue_t *queue, int element) {
 
     queue->length++;
 
-    pthread_cond_signal(&queue->waiting);
+    pthread_cond_signal(&queue->not_empty);
+  }
+  pthread_mutex_unlock(&queue->mutex);
+  return 0;
+}
+
+/**
+ * Tenta inserir um elemento na fila.
+ * Bloqueia se a fila estiver cheia
+ */
+int queue_push(queue_t *queue, void *element) {
+  pthread_mutex_lock(&queue->mutex);
+  {
+    // se a fila estiver cheia
+    while (queue->length == queue->bounds) {
+      // espera a fila abrir um espaço
+      pthread_cond_wait(&queue->not_full, &queue->mutex);
+    }
+
+    queue->data[queue->in] = element;
+    queue->in++;
+
+    if (queue->in >= queue->bounds) {
+      queue->in -= queue->bounds;
+    }
+
+    queue->length++;
+
+    pthread_cond_signal(&queue->not_empty);
   }
   pthread_mutex_unlock(&queue->mutex);
   return 0;
@@ -64,11 +108,11 @@ int queue_trypush(queue_t *queue, int element) {
  * Tenta remover uma elemento da fila.
  * Bloqueia a execução da thread se a fila estiver vazia.
  */
-void queue_pop(queue_t *queue, int *element) {
+void queue_pop(queue_t *queue, void **element) {
   pthread_mutex_lock(&queue->mutex);
   {
     while (queue->length == 0) {
-      pthread_cond_wait(&queue->waiting, &queue->mutex);
+      pthread_cond_wait(&queue->not_empty, &queue->mutex);
     }
 
     *element = queue->data[queue->out];
@@ -80,4 +124,29 @@ void queue_pop(queue_t *queue, int *element) {
     }
   }
   pthread_mutex_unlock(&queue->mutex);
+}
+
+void stream_init(stream_t *stream) {
+  stream->subscribers = 0;
+
+  queue_init(&stream->publisher_queue, 24);
+
+  pthread_mutex_init(&stream->mutex, 0);
+
+  pthread_create(&stream->thread, NULL, stream_replicate, stream);
+}
+
+int stream_subscribe(stream_t *stream, queue_t *subcription_queue) {
+  pthread_mutex_lock(&stream->mutex);
+  {
+    // TODO: lançar um erro
+    if (stream->subscribers >= MAX_SUBSCRIPTIONS) {
+      return -1;
+    }
+
+    stream->subscriber_queues[stream->subscribers] = subcription_queue;
+    stream->subscribers++;
+  }
+  pthread_mutex_unlock(&stream->mutex);
+  return 0;
 }
