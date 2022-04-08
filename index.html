@@ -2,14 +2,64 @@
 <html lang="en">
 <head>
   <title>SSE Chat</title>
+  <style>
+    main {
+      height: 312px;
+      width: 360px;
+      border: 1px solid #ddd;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+      
+    span {
+      padding: 8px;
+      background: #ddd;
+      border-radius: 16px;
+      font-family: monospace;
+      margin: 8px;
+    }
+
+    form {
+      margin-top: 8px;
+      width: 360px;
+      display: flex;
+      gap: 8px;
+    }
+
+    input {
+      flex: 1;
+      padding: 4px;
+      font-size: 16px;
+      font-family: monospace;
+    }
+  </style>
 </head>
 <body>
+  <main></main>
+  <form>
+    <input />
+    <button>Enviar</button>
+  </form>
   <script>
-    const evtSource = new EventSource("ssedemo.php");
+    let evtSource = new EventSource("chat");
+
+    let main = document.querySelector("main");
 
     evtSource.onmessage = function(event) {
-      console.log(event.data);
+      let span = document.createElement("span");
+      let text = document.createTextNode(event.data);
+      span.appendChild(text);
+      main.appendChild(span);
     }
+
+    let form = document.querySelector("form");
+    let [input] = form
+    form.addEventListener("submit", e => {
+      e.preventDefault();
+      fetch("/", { method: "POST", body: input.value }).then(() => form.reset())
+    })
   </script>
 </body>
 </html>
