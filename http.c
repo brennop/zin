@@ -151,11 +151,17 @@ void handle_connection(int connection_fd) {
                     "Content-Type: text/event-stream\r\n\r\n";
         write(connection_fd, msg, strlen(msg));
 
-        time_t timeout = time(0) + 60;
+        // avisa o cliente para tentar se conectar a cada 5 segundos
+        write(connection_fd, "retry: 5000\r\n\r\n", 16);
+
+        time_t timeout = time(0) + 360;
         while (time(0) < timeout) {
           char *message;
           queue_pop(&message_queue, (void **)&message);
+
+          write(connection_fd, "data: ", 6);
           write(connection_fd, message, strlen(message));
+          write(connection_fd, "\r\n\r\n", 4);
         }
 
         stream_unsubscribe(&message_stream, subscription);
@@ -176,15 +182,19 @@ void handle_connection(int connection_fd) {
       }
 
       payload = strtok(NULL, "\r\n");
-      char *message = malloc((strlen(payload) + 1 + 6 + 4) * sizeof(*message));
-      strcpy(message, "data: ");
-      strcat(message, payload);
-      strcat(message, "\r\n\r\n");
 
-      queue_push(&message_stream.publisher_queue, message);
+      if (payload == NULL) {
+        char *error_msg = "HTTP/1.1 400 Bad Request\r\n\r\n";
+        write(connection_fd, error_msg, strlen(error_msg));
+      } else {
+        char *message = malloc((strlen(payload)) * sizeof(*message));
+        strcat(message, payload);
 
-      char *msg = "HTTP/1.1 201 Created\r\n\r\n";
-      write(connection_fd, msg, strlen(msg));
+        queue_push(&message_stream.publisher_queue, message);
+
+        char *msg = "HTTP/1.1 201 Created\r\n\r\n";
+        write(connection_fd, msg, strlen(msg));
+      }
     } else {
       // respondemos "Not Implemented" pra qualquer outro método
       write(connection_fd, "HTTP/1.1 501 Not Implemented\r\n\r\n", 31);
