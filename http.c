@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <arpa/inet.h>
@@ -19,6 +20,9 @@
 #define POOL_SIZE 20
 /** tamanho da fila de conexões */
 #define QUEUE_SIZE 50
+
+/** quanto tempo uma conexão dura */
+#define TTL 60
 
 #define MAX_USERS 50
 
@@ -140,19 +144,21 @@ void handle_connection(int connection_fd) {
       } else {
         queue_t message_queue;
         queue_init(&message_queue, 24);
-        stream_subscribe(&message_stream, &message_queue);
+        int subscription = stream_subscribe(&message_stream, &message_queue);
 
         // iniciamos um sse
         char *msg = "HTTP/1.1 200 OK\r\n"
                     "Content-Type: text/event-stream\r\n\r\n";
         write(connection_fd, msg, strlen(msg));
 
-        // TODO: fechar esse while se a conexão fechar
-        while (1) {
+        time_t timeout = time(0) + 60;
+        while (time(0) < timeout) {
           char *message;
-          queue_pop(&message_queue, &message);
+          queue_pop(&message_queue, (void **)&message);
           write(connection_fd, message, strlen(message));
         }
+
+        stream_unsubscribe(&message_stream, subscription);
       }
     } else if (strncmp(method, "POST", 5) == 0) {
       char *payload;
@@ -202,11 +208,14 @@ void *stream_replicate(void *arg) {
   stream_t *stream = (stream_t *)arg;
   while (1) {
     char *message;
-    queue_pop(&stream->publisher_queue, &message);
+    queue_pop(&stream->publisher_queue, (void **)&message);
     pthread_mutex_lock(&stream->mutex);
     {
-      for (int i = 0; i < stream->subscribers; i++) {
-        queue_push(stream->subscriber_queues[i], message);
+      for (int i = 0; i < MAX_SUBSCRIPTIONS; i++) {
+        queue_t *q = stream->subscriber_queues[i];
+        if (q != NULL) {
+          queue_push(stream->subscriber_queues[i], message);
+        }
       }
     }
     pthread_mutex_unlock(&stream->mutex);

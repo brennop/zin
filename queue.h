@@ -137,6 +137,7 @@ void stream_init(stream_t *stream) {
 }
 
 int stream_subscribe(stream_t *stream, queue_t *subcription_queue) {
+  int subscription;
   pthread_mutex_lock(&stream->mutex);
   {
     // TODO: lançar um erro
@@ -144,9 +145,27 @@ int stream_subscribe(stream_t *stream, queue_t *subcription_queue) {
       return -1;
     }
 
-    stream->subscriber_queues[stream->subscribers] = subcription_queue;
+    for (subscription = 0; subscription < MAX_SUBSCRIPTIONS; subscription++) {
+      if (stream->subscriber_queues[subscription] == NULL)
+        break;
+    }
+
+    stream->subscriber_queues[subscription] = subcription_queue;
     stream->subscribers++;
   }
   pthread_mutex_unlock(&stream->mutex);
-  return 0;
+  return subscription;
+}
+
+void stream_unsubscribe(stream_t *stream, int subscription) {
+  if (subscription < 0 || subscription > MAX_SUBSCRIPTIONS) {
+    return;
+  }
+
+  pthread_mutex_lock(&stream->mutex);
+  {
+    stream->subscriber_queues[subscription] = NULL;
+    stream->subscribers--;
+  }
+  pthread_mutex_unlock(&stream->mutex);
 }
