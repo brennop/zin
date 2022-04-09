@@ -154,6 +154,7 @@ void handle_connection(int connection_fd) {
         // avisa o cliente para tentar se conectar a cada 5 segundos
         write(connection_fd, "retry: 5000\r\n\r\n", 16);
 
+        // TODO: usar queue_timed_pop com esse timeout
         time_t timeout = time(0) + 360;
         while (time(0) < timeout) {
           char *message;
@@ -162,9 +163,12 @@ void handle_connection(int connection_fd) {
           write(connection_fd, "data: ", 6);
           write(connection_fd, message, strlen(message));
           write(connection_fd, "\r\n\r\n", 4);
+
+          free(message);
         }
 
         stream_unsubscribe(&message_stream, subscription);
+        queue_destroy(&message_queue);
       }
     } else if (strncmp(method, "POST", 5) == 0) {
       char *payload;
@@ -224,9 +228,13 @@ void *stream_replicate(void *arg) {
       for (int i = 0; i < MAX_SUBSCRIPTIONS; i++) {
         queue_t *q = stream->subscriber_queues[i];
         if (q != NULL) {
-          queue_push(stream->subscriber_queues[i], message);
+          int n = strlen(message);
+          char *_message = malloc((n) * sizeof(*_message));
+          memcpy(_message, message, n);
+          queue_push(stream->subscriber_queues[i], _message);
         }
       }
+      free(message);
     }
     pthread_mutex_unlock(&stream->mutex);
   }

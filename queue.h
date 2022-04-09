@@ -1,7 +1,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 
-#define MAX_SUBSCRIPTIONS 1024
+#define MAX_SUBSCRIPTIONS 128
 
 typedef struct {
   /** array de elementos */
@@ -124,6 +124,10 @@ void queue_pop(queue_t *queue, void **element) {
     }
   }
   pthread_mutex_unlock(&queue->mutex);
+}
+
+void queue_destroy(queue_t *queue) {
+  free(queue->data);
 }
 
 void stream_init(stream_t *stream) {
