@@ -29,12 +29,15 @@
 pthread_t thread_pool[POOL_SIZE];
 queue_t connection_queue;
 
-stream_t message_stream;
-queue_t publisher_queue;
+pthread_t gargage_collector;
+queue_t message_queue;
+
+pthread_mutex_t message_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int setup_server(int port);
 void handle_connection(int connection_fd);
 void *thread_handler();
+void *garbage_collect();
 
 void check(int value, char *message) {
   if (value == -1) {
@@ -48,12 +51,13 @@ int main() {
   queue_init(&connection_queue, QUEUE_SIZE);
 
   // incializa a stream de mensagens
-  stream_init(&message_stream);
+  queue_init(&message_queue, 4);
 
   // cria as threads da thread pool
   for (int i = 0; i < POOL_SIZE; i++) {
     pthread_create(&thread_pool[i], NULL, thread_handler, NULL);
   }
+  pthread_create(&gargage_collector, NULL, garbage_collect, NULL);
 
   int server_socket = setup_server(PORT);
 
@@ -142,9 +146,6 @@ void handle_connection(int connection_fd) {
           fclose(file);
         }
       } else {
-        queue_t message_queue;
-        queue_init(&message_queue, 24);
-        int subscription = stream_subscribe(&message_stream, &message_queue);
 
         // iniciamos um sse
         char *msg = "HTTP/1.1 200 OK\r\n"
@@ -157,20 +158,21 @@ void handle_connection(int connection_fd) {
         // TODO: usar queue_timed_pop com esse timeout
         time_t timeout = time(0) + 60;
 
+        int index;
+        queue_out(&message_queue, &index);
+
         while (1) {
           char *message;
-          if (queue_pop_timeout(&message_queue, (void **)&message, timeout) != 0)
-            break;
+          queue_get(&message_queue, (void **)&message, &index);
 
-          write(connection_fd, "data: ", 6);
-          write(connection_fd, message, strlen(message));
-          write(connection_fd, "\r\n\r\n", 4);
-
-          free(message);
+          pthread_mutex_lock(&message_mutex);
+          if (message) {
+            write(connection_fd, "data: ", 6);
+            write(connection_fd, message, strlen(message));
+            write(connection_fd, "\r\n\r\n", 4);
+          }
+          pthread_mutex_unlock(&message_mutex);
         }
-
-        stream_unsubscribe(&message_stream, subscription);
-        queue_destroy(&message_queue);
       }
     } else if (strncmp(method, "POST", 5) == 0) {
       char *payload;
@@ -196,7 +198,7 @@ void handle_connection(int connection_fd) {
         char *message = malloc((strlen(payload)) * sizeof(*message));
         strcat(message, payload);
 
-        queue_push(&message_stream.publisher_queue, message);
+        queue_push(&message_queue, message);
 
         char *msg = "HTTP/1.1 201 Created\r\n\r\n";
         write(connection_fd, msg, strlen(msg));
@@ -220,24 +222,22 @@ void *thread_handler() {
   }
 }
 
-void *stream_replicate(void *arg) {
-  stream_t *stream = (stream_t *)arg;
+void *garbage_collect(void *arg) {
   while (1) {
     char *message;
-    queue_pop(&stream->publisher_queue, (void **)&message);
-    pthread_mutex_lock(&stream->mutex);
+    int index;
+
+    queue_out(&message_queue, &index);
+    queue_get(&message_queue, (void **)&message, &index);
+
+    sleep(1);
+
+    queue_pop(&message_queue, (void **)&message);
+    pthread_mutex_lock(&message_mutex);
     {
-      for (int i = 0; i < MAX_SUBSCRIPTIONS; i++) {
-        queue_t *q = stream->subscriber_queues[i];
-        if (q != NULL) {
-          int n = strlen(message);
-          char *_message = malloc((n) * sizeof(*_message));
-          memcpy(_message, message, n);
-          queue_push(stream->subscriber_queues[i], _message);
-        }
-      }
       free(message);
+      message = NULL;
     }
-    pthread_mutex_unlock(&stream->mutex);
+    pthread_mutex_unlock(&message_mutex);
   }
 }

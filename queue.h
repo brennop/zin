@@ -25,17 +25,6 @@ typedef struct {
   pthread_cond_t not_full;
 } queue_t;
 
-void *stream_replicate(void *stream);
-
-typedef struct {
-  int subscribers;
-  queue_t publisher_queue;
-  queue_t *subscriber_queues[MAX_SUBSCRIPTIONS];
-
-  pthread_t thread;
-  pthread_mutex_t mutex;
-} stream_t;
-
 /**
  * Inicializa uma fila queue com capacidade capcity
  */
@@ -63,16 +52,12 @@ int queue_trypush(queue_t *queue, void *element) {
       pthread_mutex_unlock(&queue->mutex);
       return -1;
     }
-    queue->data[queue->in] = element;
+    queue->data[queue->in % queue->bounds] = element;
     queue->in++;
-
-    if (queue->in >= queue->bounds) {
-      queue->in -= queue->bounds;
-    }
 
     queue->length++;
 
-    pthread_cond_signal(&queue->not_empty);
+    pthread_cond_broadcast(&queue->not_empty);
   }
   pthread_mutex_unlock(&queue->mutex);
   return 0;
@@ -91,16 +76,12 @@ int queue_push(queue_t *queue, void *element) {
       pthread_cond_wait(&queue->not_full, &queue->mutex);
     }
 
-    queue->data[queue->in] = element;
+    queue->data[queue->in % queue->bounds] = element;
     queue->in++;
-
-    if (queue->in >= queue->bounds) {
-      queue->in -= queue->bounds;
-    }
 
     queue->length++;
 
-    pthread_cond_signal(&queue->not_empty);
+    pthread_cond_broadcast(&queue->not_empty);
   }
   pthread_mutex_unlock(&queue->mutex);
   return 0;
@@ -117,93 +98,32 @@ void queue_pop(queue_t *queue, void **element) {
       pthread_cond_wait(&queue->not_empty, &queue->mutex);
     }
 
-    *element = queue->data[queue->out];
+    *element = queue->data[queue->out % queue->bounds];
     queue->length--;
 
     queue->out++;
-    if (queue->out >= queue->bounds) {
-      queue->out -= queue->bounds;
-    }
   }
   pthread_mutex_unlock(&queue->mutex);
 }
 
-int queue_pop_timeout(queue_t *queue, void **element, time_t wait) {
-  struct timespec time;
-  time.tv_sec = wait;
-  time.tv_nsec = 0;
-
-  int wait_result;
-
+void queue_get(queue_t *queue, void **element, int *index) {
   pthread_mutex_lock(&queue->mutex);
   {
-    while (queue->length == 0) {
-      wait_result = pthread_cond_timedwait(&queue->not_empty, &queue->mutex, &time);
-      printf("wait result: %d\n", wait_result);
-
-      if(wait_result != 0) {
-        pthread_mutex_unlock(&queue->mutex);
-        return wait_result;
-      }
+    while (queue->length == 0 || *index < queue->out || *index >= queue->in) {
+      pthread_cond_wait(&queue->not_empty, &queue->mutex);
     }
 
-    *element = queue->data[queue->out];
-    queue->length--;
+    *element = queue->data[*index % queue->bounds];
 
-    queue->out++;
-    if (queue->out >= queue->bounds) {
-      queue->out -= queue->bounds;
-    }
+    *index += 1;
   }
   pthread_mutex_unlock(&queue->mutex);
-
-  return 0;
 }
 
-void queue_destroy(queue_t *queue) {
-  free(queue->data);
+void queue_out(queue_t *queue, int *out) {
+  pthread_mutex_lock(&queue->mutex);
+  *out = queue->out;
+  pthread_mutex_unlock(&queue->mutex);
 }
 
-void stream_init(stream_t *stream) {
-  stream->subscribers = 0;
-
-  queue_init(&stream->publisher_queue, 24);
-
-  pthread_mutex_init(&stream->mutex, 0);
-
-  pthread_create(&stream->thread, NULL, stream_replicate, stream);
-}
-
-int stream_subscribe(stream_t *stream, queue_t *subcription_queue) {
-  int subscription;
-  pthread_mutex_lock(&stream->mutex);
-  {
-    // TODO: lançar um erro
-    if (stream->subscribers >= MAX_SUBSCRIPTIONS) {
-      return -1;
-    }
-
-    for (subscription = 0; subscription < MAX_SUBSCRIPTIONS; subscription++) {
-      if (stream->subscriber_queues[subscription] == NULL)
-        break;
-    }
-
-    stream->subscriber_queues[subscription] = subcription_queue;
-    stream->subscribers++;
-  }
-  pthread_mutex_unlock(&stream->mutex);
-  return subscription;
-}
-
-void stream_unsubscribe(stream_t *stream, int subscription) {
-  if (subscription < 0 || subscription > MAX_SUBSCRIPTIONS) {
-    return;
-  }
-
-  pthread_mutex_lock(&stream->mutex);
-  {
-    stream->subscriber_queues[subscription] = NULL;
-    stream->subscribers--;
-  }
-  pthread_mutex_unlock(&stream->mutex);
-}
+void queue_destroy(queue_t *queue) { free(queue->data); }
