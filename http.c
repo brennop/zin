@@ -155,10 +155,12 @@ void handle_connection(int connection_fd) {
         write(connection_fd, "retry: 5000\r\n\r\n", 16);
 
         // TODO: usar queue_timed_pop com esse timeout
-        time_t timeout = time(0) + 360;
-        while (time(0) < timeout) {
+        time_t timeout = time(0) + 60;
+
+        while (1) {
           char *message;
-          queue_pop(&message_queue, (void **)&message);
+          if (queue_pop_timeout(&message_queue, (void **)&message, timeout) != 0)
+            break;
 
           write(connection_fd, "data: ", 6);
           write(connection_fd, message, strlen(message));

@@ -1,5 +1,7 @@
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 #define MAX_SUBSCRIPTIONS 128
 
@@ -124,6 +126,38 @@ void queue_pop(queue_t *queue, void **element) {
     }
   }
   pthread_mutex_unlock(&queue->mutex);
+}
+
+int queue_pop_timeout(queue_t *queue, void **element, time_t wait) {
+  struct timespec time;
+  time.tv_sec = wait;
+  time.tv_nsec = 0;
+
+  int wait_result;
+
+  pthread_mutex_lock(&queue->mutex);
+  {
+    while (queue->length == 0) {
+      wait_result = pthread_cond_timedwait(&queue->not_empty, &queue->mutex, &time);
+      printf("wait result: %d\n", wait_result);
+
+      if(wait_result != 0) {
+        pthread_mutex_unlock(&queue->mutex);
+        return wait_result;
+      }
+    }
+
+    *element = queue->data[queue->out];
+    queue->length--;
+
+    queue->out++;
+    if (queue->out >= queue->bounds) {
+      queue->out -= queue->bounds;
+    }
+  }
+  pthread_mutex_unlock(&queue->mutex);
+
+  return 0;
 }
 
 void queue_destroy(queue_t *queue) {
