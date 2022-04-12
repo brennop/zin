@@ -3,10 +3,11 @@ CFLAGS=-Wall -std=c99 -pthread
 
 all: http
 
-http: 
+http: http.o queue.o
+	$(CC) $(CFLAGS) -o http http.o queue.o
 
 clean:
-	rm -f http
+	rm -f http *.o
 
 run: http
 		./http

@@ -62,12 +62,14 @@ int main() {
   int server_socket = setup_server(PORT);
 
   while (1) {
-    int connection_fd = accept(server_socket, NULL, NULL);
+    int *connection_fd = malloc(sizeof(*connection_fd));
+
+    *connection_fd = accept(server_socket, NULL, NULL);
 
     if (queue_trypush(&connection_queue, connection_fd) != 0) {
       // recusa conexões se a fila estiver cheia
-      write(connection_fd, "HTTP/1.1 503 Service Unavailable\r\n\r\n", 36);
-      close(connection_fd);
+      write(*connection_fd, "HTTP/1.1 503 Service Unavailable\r\n\r\n", 36);
+      close(*connection_fd);
     }
   }
 
@@ -215,10 +217,12 @@ void handle_connection(int connection_fd) {
 void *thread_handler() {
   // a thread deve rodar pra sempre
   while (1) {
-    int connection_fd;
-    queue_pop(&connection_queue, &connection_fd);
+    int *connection_fd;
+    queue_pop(&connection_queue, (void**) &connection_fd);
 
-    handle_connection(connection_fd);
+    handle_connection(*connection_fd);
+
+    free(connection_fd);
   }
 }
 
