@@ -48,7 +48,7 @@ int queue_push(queue_t *queue, void *element);
  */
 void queue_pop(queue_t *queue, void **element);
 
-void queue_get(queue_t *queue, void **element, int *index);
+int queue_get(queue_t *queue, void **element, int *index, int timeout_sec);
 
 void queue_out(queue_t *queue, int *out);
 

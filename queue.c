@@ -81,11 +81,21 @@ void queue_pop(queue_t *queue, void **element) {
   pthread_mutex_unlock(&queue->mutex);
 }
 
-void queue_get(queue_t *queue, void **element, int *index) {
+int queue_get(queue_t *queue, void **element, int *index, int timeout_sec) {
+  struct timespec abstime;
+  clock_gettime(CLOCK_REALTIME, &abstime);
+  abstime.tv_sec += timeout_sec;
+
+  int r;
   pthread_mutex_lock(&queue->mutex);
   {
     while (queue->length == 0 || *index < queue->out || *index >= queue->in) {
-      pthread_cond_wait(&queue->not_empty, &queue->mutex);
+      r = pthread_cond_timedwait(&queue->not_empty, &queue->mutex, &abstime);
+
+      if (r != 0) {
+        pthread_mutex_unlock(&queue->mutex);
+        return r;
+      }
     }
 
     *element = queue->data[*index % queue->bounds];
@@ -93,6 +103,7 @@ void queue_get(queue_t *queue, void **element, int *index) {
     *index += 1;
   }
   pthread_mutex_unlock(&queue->mutex);
+  return 0;
 }
 
 void queue_out(queue_t *queue, int *out) {

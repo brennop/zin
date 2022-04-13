@@ -157,15 +157,17 @@ void handle_connection(int connection_fd) {
         // avisa o cliente para tentar se conectar a cada 5 segundos
         write(connection_fd, "retry: 5000\r\n\r\n", 16);
 
-        // TODO: usar queue_timed_pop com esse timeout
-        time_t timeout = time(0) + 60;
-
         int index;
         queue_out(&message_queue, &index);
 
         while (1) {
           char *message;
-          queue_get(&message_queue, (void **)&message, &index);
+
+          int timedout =
+              queue_get(&message_queue, (void **)&message, &index, 60);
+
+          if (timedout)
+            break;
 
           pthread_mutex_lock(&message_mutex);
           if (message) {
@@ -218,7 +220,7 @@ void *thread_handler() {
   // a thread deve rodar pra sempre
   while (1) {
     int *connection_fd;
-    queue_pop(&connection_queue, (void**) &connection_fd);
+    queue_pop(&connection_queue, (void **)&connection_fd);
 
     handle_connection(*connection_fd);
 
@@ -232,7 +234,7 @@ void *garbage_collect(void *arg) {
     int index;
 
     queue_out(&message_queue, &index);
-    queue_get(&message_queue, (void **)&message, &index);
+    queue_get(&message_queue, (void **)&message, &index, 31557600);
 
     sleep(1);
 
