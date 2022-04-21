@@ -84,5 +84,40 @@ _push_ ocorrer, será acordada para consumir o elemento inserido. Ao remover um
 elemento, sinaliza qualquer thread que posso estar esperando na variável de
 condição _not_full_.
 
+```c
+int queue_get(queue_t *queue, void **element, int *index, int timeout_sec);
+```
+
+Essa operação não está presente na referência e foi projetado para o nosso
+problema. _get_ busca o elemento no _index_, mas não altera a estrutura da fila.
+Além disso, essa operação não espera para sempre como o _pop_, mas tem um
+limite, definido por `timeout_sec` para esperar, usando a função
+`pthread_cond_timedwait`.
+
+### Fluxo do Programa
+
+O fluxo do servidor é bem simples, já que a maior parte do trabalho pesado é
+executado pela fila. Primeiro esperamos conexões com a função `accept` e botamos
+qualquer conexão recebida na fila `connection_queue`. Se não é possível inserir,
+respondemos ao cliente que o servidor está sobrecarregado.
+
+Nas threads criadas da _thread pool_ esperamos conexões chegarem tentando
+remover da fila `connection_queue`. Para lidar com uma requisição, fazemos um
+parsing básico para entender qual é o método, e qual é o caminho da requisição
+HTTP.
+
+Se for uma requisição "GET /", enviamos o arquivo `index.html` para o cliente.
+
+Se for uma requisição "POST /", obtemos o corpo da requisição e o colocamos na
+fila `message_queue`.
+
+Se for uma requisição "GET \*", então enviamos o header `Content-Type:
+text/event-stream` para indicar que vamos iniciar uma sequência de eventos, e em
+seguida, entramos em um loop esperando na fila `message_queue`.
+
+Para evitar vazamentos de memória, criamos uma thread que espera na fila
+`message_queue`, da um tempo para outras threads consumirem as mensagens, e em
+seguida libera o espaço das mensagens removidas.
+
 [1]: https://apr.apache.org/docs/apr-util/0.9/group__APR__Util__FIFO.html
 
