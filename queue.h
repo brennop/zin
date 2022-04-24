@@ -48,6 +48,11 @@ int queue_push(queue_t *queue, void *element);
  */
 void queue_pop(queue_t *queue, void **element);
 
+/**
+ * Obtém o elemento em index na fila.
+ * Bloqueia a execução da thread se a fila estiver vazia.
+ * Se ficar bloqueado por mais de timeout_sec, retorna -1.
+ */
 int queue_get(queue_t *queue, void **element, int *index, int timeout_sec);
 
 void queue_out(queue_t *queue, int *out);

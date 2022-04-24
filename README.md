@@ -5,10 +5,20 @@
 
 ## Introdução
 
-Muitos problemas mapeiam
+Muitos problemas envolvem a comunição de diversos agentes, sem exigir restrições
+em como essa comunicação é realizada. Quando isso ocorre, o ideal, para manter
+os requisitos é modelar uma solução com programação concorrente.
 
-Nosso servidor será projetado em cima do protocolo HTTP. O protocolo HTTP é o
-principal protocolo em atuação na Web, e permite que clientes conectados 
+Uma das áreas que envolve problemas de comunição concorrente são servidores na
+internet, como servidores HTTP. O protocolo HTTP é o principal protocolo em
+atuação na Web, e permite que clientes conectados enviem informações e
+requisitem recursos, como páginas HTML.
+
+O protocolo HTTP é interessante pois há uma vasta disponibilidade de clientes,
+desde os browsers tradicionais nos computadores, até geladeiras inteligentes.
+O protocolo HTTP também disponibiliza várias funcionalidades, como os _Server
+Sent Events_ [^1], que permitem que o servidor envie mensagens para clientes que
+permanecem ouvindo na conexão.
 
 ## Problema
 
@@ -21,7 +31,8 @@ Os usuários podem acessar o sistema concorrentemente para receber a página Web
 e por tanto, o serviço deve estar preparado para servir múltiplos usuários
 concorrentemente. Os usuários também podem enviar mensagens concorrentemente, e
 estarem prontos para receber mensagens ao mesmo tempo. O serviço deve considerar
-todos esses casos e como atender uma quantidade desconhecidade de clientes.
+todos esses casos e como atender uma quantidade desconhecida de clientes.
+
 
 ## Solução
 
@@ -33,28 +44,29 @@ para esperar uma conexão e nos entregar um descritor, que aponta para a conexã
 recebida.
 
 Para lidar com essas conexões concorrentemente, iremos criar uma _thread pool_,
-ou um grupo de threads, que lidam com as conexões a medida que chegam. 
+ou um grupo de threads, que lidam com as conexões a medida que chegam.
 
 ### Fila Concorrente
 
 Para resolver esse último problema, iremos usar uma fila concorrente. Uma fila
 concorrente funciona assim como uma fila normal, porém suas operações utilizam
 de locks e variáveis de condição para garantir que possa ser acessada por
-múltiplas threads. 
+múltiplas threads.
 
 Como referência para implementação e projeto da API, foi utilizado a _Thread
-Safe FIFO bounded queue_ [1], disponível no projeto Apache Portable Runtime,
-licensiado sobre a licensa Apache License.
+Safe FIFO bounded queue_ [^2], disponível no projeto Apache Portable Runtime,
+licenciado sobre a licença Apache License.
 
 A implementação apresentada nesse projeto difere da referência, removendo partes
-que não foram utilizadas e adicionando uma funcionalidade para lidar com novos
-problemas.
+que não foram utilizadas e adicionando algumas funcionalidades para lidar com os
+nossos problemas.
 
 A fila implementada consiste basicamente de um array de ponteiros para guardar
 os dados, um inteiro para guardar o próximo índice para inserção e outro para
-guardar o próximo índice para remoção, alguns inteiros para lidar com os
-limites. Além disso, nossa fila possui um _mutex_ e duas variáveis de condição,
-para indicar se a fila deixou de estar vazia ou deixou de estar cheia.
+guardar o próximo índice para remoção e alguns inteiros para lidar com os
+limites. Além disso, nossa fila possui um _mutex_ para criar regiões de exclusão
+mútua e duas variáveis de condição, para indicar se a fila deixou de estar vazia
+ou deixou de estar cheia.
 
 ### Operações
 
@@ -112,12 +124,72 @@ Se for uma requisição "POST /", obtemos o corpo da requisição e o colocamos 
 fila `message_queue`.
 
 Se for uma requisição "GET \*", então enviamos o header `Content-Type:
-text/event-stream` para indicar que vamos iniciar uma sequência de eventos, e em
-seguida, entramos em um loop esperando na fila `message_queue`.
+text/event-stream` para indicar para o cliente que vamos iniciar uma sequência
+de eventos, e em seguida, entramos em um loop esperando na fila `message_queue`.
 
 Para evitar vazamentos de memória, criamos uma thread que espera na fila
 `message_queue`, da um tempo para outras threads consumirem as mensagens, e em
 seguida libera o espaço das mensagens removidas.
 
-[1]: https://apr.apache.org/docs/apr-util/0.9/group__APR__Util__FIFO.html
+```mermaid
+flowchart TD
+    A[Servidor :8080] -->|cliente| Z[accept]
+    Z -->|trypush| B(connection_queue)
+    D[Thread Pool] -->|pop| B
+    D --> M{Requisição}
+    M -->|GET /| I[index.html]
+    M -->|GET *| S[SSE]
+    M -->|POST /| O[POST]
+    O -->|push| P(message_queue)
+    S -->|get| P
+    G[Garbage Collector] -->|pop| P
+```
 
+### Uso
+
+Para rodar o programa, podemos usar o comando:
+
+```bash
+make run
+```
+
+O programa também pode ser compilado e executado da seguinte forma:
+
+```bash
+gcc -o http http.c queue.c -lpthread
+./http
+```
+
+O servidor então escuta na porta :8080, e pode ser acessado por um navegador
+pela URL [http://localhost:8080](http://localhost:8080), ou usando o IP da sua
+máquina.
+
+## Conclusão
+
+Soluções _multithread_ são a resposta natural para problemas concorrentes, como
+o problema apresentado. Como são muito comuns, as linguagens e sistema
+operacional oferecem várias opções para ajudar. 
+
+Porém, por não terem uma execução determinística, são mais difíceis de se lidar.
+É bem comum criar condições de corrida e _deadlocks_ enquanto se programa uma
+solução _multithread_, principalmente em linguagens baixo nível como C, onde
+todo o gerenciamento das threads é feito pelo usuário.
+
+O problema complica mais ainda quando lidamos com memória gerenciada pelo
+usuário, como é o caso desse trabalho. Precisamos sempre estar atentos para não
+utilizar espaços de memória que foram liberados em outra _thread_. No caso desse
+trabalho, foi necessário adicionar uma _thread_ apenas para lidar com `free` de
+mensagens.
+
+Hoje em dia, lidar com esses problemas se torna cada vez mais fácil, a medida
+que programadores e pesquisadores criam novas ferramentas para lidar com
+concorrência. Linguagens como Go e Lua oferecem modelos concorrentes usando
+_corrotinas_, e Javascript usa um loop de eventos para lidar com várias tarefas
+ao mesmo tempo. Esses modelos tentam remover algumas das dificuldades dos
+problemas concorrentes, sacrificando um pouco de performance.
+
+## Referências
+
+[1]: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events
+[2]: https://apr.apache.org/docs/apr-util/0.9/group__APR__Util__FIFO.html
+[]: https://youtu.be/esXw4bdaZkc
