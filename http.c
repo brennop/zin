@@ -163,14 +163,17 @@ void handle_connection(int connection_fd) {
         while (1) {
           char *message;
 
+          // tenta pegar uma mensagem na fila
           int timedout =
               queue_get(&message_queue, (void **)&message, &index, 60);
 
+          // finalizamos a conexão se demorar demais (60 segundos)
           if (timedout)
             break;
 
           pthread_mutex_lock(&message_mutex);
           if (message) {
+            // envia a mensagem para esse usuário
             write(connection_fd, "data: ", 6);
             write(connection_fd, message, strlen(message));
             write(connection_fd, "\r\n\r\n", 4);
@@ -236,6 +239,7 @@ void *garbage_collect(void *arg) {
     queue_out(&message_queue, &index);
     queue_get(&message_queue, (void **)&message, &index, 31557600);
 
+    // espera um tempo antes de coletar essa mensagem
     sleep(1);
 
     queue_pop(&message_queue, (void **)&message);

@@ -131,19 +131,7 @@ Para evitar vazamentos de memória, criamos uma thread que espera na fila
 `message_queue`, da um tempo para outras threads consumirem as mensagens, e em
 seguida libera o espaço das mensagens removidas.
 
-```mermaid
-flowchart TD
-    A[Servidor :8080] -->|cliente| Z[accept]
-    Z -->|trypush| B(connection_queue)
-    D[Thread Pool] -->|pop| B
-    D --> M{Requisição}
-    M -->|GET /| I[index.html]
-    M -->|GET *| S[SSE]
-    M -->|POST /| O[POST]
-    O -->|push| P(message_queue)
-    S -->|get| P
-    G[Garbage Collector] -->|pop| P
-```
+![](flowchart.png)
 
 ### Uso
 
@@ -190,6 +178,7 @@ problemas concorrentes, sacrificando um pouco de performance.
 
 ## Referências
 
-[1]: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events
-[2]: https://apr.apache.org/docs/apr-util/0.9/group__APR__Util__FIFO.html
-[]: https://youtu.be/esXw4bdaZkc
+[^1]: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events
+[^2]: https://apr.apache.org/docs/apr-util/0.9/group__APR__Util__FIFO.html
+
+- [Networking in C](https://youtu.be/esXw4bdaZkc)
